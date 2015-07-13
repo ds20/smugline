@@ -7,6 +7,11 @@ Usage:
                                   [--media=(videos | images | all)]
                                   [--email=email_address]
                                   [--password=password]
+  smugline.py uploadstructure <album_name> --api-key=<apy_key>
+                                  [--from=folder_name]
+                                  [--media=(videos | images | all)]
+                                  [--email=email_address]
+                                  [--password=password]
   smugline.py download <album_name> --api-key=<apy_key>
                                     [--to=folder_name]
                                     [--media=(videos | images | all)]
@@ -30,6 +35,7 @@ Usage:
 
 Arguments:
   upload            uploads files to a smugmug album
+  uploadstructure   uploads a folder structure to a smugmug album set
   download          downloads an entire album into a folder
   process           processes a json file with upload directives
   list              list album names on smugmug
@@ -89,7 +95,23 @@ class SmugLine(object):
             return ALL_FILTER
 
     def upload_file(self, album, image):
-        self.smugmug.images_upload(AlbumID=album['id'], **image)
+        result = "-1"
+        retries = 0;
+        while (result != 'smugmug.images.upload') and (retries < 5):
+            try:
+                retries = retries + 1
+                if result == "-2":
+                    print('Exception, retrying (attempt {0}).'.format(retries))
+                    time.sleep(retries*3)
+                rsp = self.smugmug.images_upload(AlbumID=album['id'], **image)
+                result = rsp['method']
+            except Exception as inst:
+                print inst
+                result = "-2"
+                pass
+        if result == "-2":
+                    print('ERROR: File upload failed.')
+    
 
     # source: http://stackoverflow.com/a/16696317/305019
     def download_file(self, url, folder, filename=None):
@@ -132,9 +154,44 @@ class SmugLine(object):
             self._upload(group, album_name, album)
 
     def upload_folder(self, source_folder, album_name, file_filter=IMG_FILTER):
-        album = self.get_or_create_album(album_name)
+        album = self.get_or_create_album(album_name, )
         images = self.get_images_from_folder(source_folder, file_filter)
         self._upload(images, album_name, album)
+        
+        
+    def account_folder_number(self, source_folder):    
+        images = self.get_images_from_folder(source_folder, file_filter)
+        return len(images)
+        
+    def upload_folder_structure(self, album_title, source_folder, file_filter, uploaded_files, total_files):
+        album_name = source_folder.replace("./", "").split('/', 1)[1]
+        subcategory_name=source_folder.replace("./", "").split('/', 1)[0]
+        categories = self.smugmug.categories_get()
+        category = None
+        for candidate_category in categories['Categories']:
+            if candidate_category['Name'] == album_title:
+                category = candidate_category
+            
+        if category is None:
+            category = self.smugmug.categories_create( Name=album)['Category']
+
+
+
+        subcategories = self.smugmug.subcategories_get(CategoryID=category['id'])
+        subcategory =  None
+        for candidate_subcategory in subcategories['SubCategories']:
+            if candidate_subcategory['Name'] == subcategory_name:
+                subcategory = candidate_subcategory
+            
+        if subcategory is None:
+            subcategory = self.smugmug.subcategories_create( Name=subcategory_name, CategoryID=category['id'])['SubCategory']
+
+
+
+
+        album = self.create_album(album_name, 'unlisted', subcategory['id'])
+        images = self.get_images_from_folder(source_folder, file_filter)
+        self._upload(images, album_name, album, uploaded_files, total_files)
 
     def download_album(self, album_name, dest_folder, file_filter=IMG_FILTER):
         album = self.get_album_by_name(album_name)
@@ -144,11 +201,12 @@ class SmugLine(object):
         images = self._get_images_for_album(album, file_filter)
         self._download(images, dest_folder)
 
-    def _upload(self, images, album_name, album):
+    def _upload(self, images, album_name, album, uploaded_files, total_files):
         images = self._remove_duplicates(images, album)
         for image in images:
-            print('uploading {0} -> {1}'.format(image, album_name))
+            print('[{0:03d}/{1:03d}] Uploading {2}'.format(uploaded_files, total_files, image))
             self.upload_file(album, image)
+            uploaded_files = uploaded_files + 1
 
     def _download(self, images, dest_folder):
         for img in images:
@@ -241,10 +299,13 @@ class SmugLine(object):
         album_name = self._format_album_name(album_name)
         album = self.smugmug.albums_create(Title=album_name, Public=public)
         album_info = self.get_album_info(album['Album'])
-        print('{0} album {1} created. URL: {2}'.format(
-            privacy,
-            album_name,
-            album_info['Album']['URL']))
+        return album_info['Album']
+
+    def create_album(self, album_name, privacy, category):
+        public = (privacy == 'public')
+        album_name = self._format_album_name(album_name)
+        album = self.smugmug.albums_create(Title=album_name, Public=public, CategoryID=category)
+        album_info = self.get_album_info(album['Album'])
         return album_info['Album']
 
     def get_images_from_folder(self, folder, img_filter=IMG_FILTER):
@@ -301,6 +362,18 @@ if __name__ == '__main__':
         smugline.upload_folder(arguments['--from'],
                         arguments['<album_name>'],
                         file_filter)
+    if arguments['uploadstructure']:
+        file_filter = smugline.get_filter(arguments['--media'])
+        number_of_files = 0
+        for dirpath, dirnames, filenames in os.walk(arguments['--from']):
+            if not dirnames: 
+                number_of_files += smugline.account_folder_number(dirpath)
+        uploaded_files = 1
+        for dirpath, dirnames, filenames in os.walk(arguments['--from']):
+            if not dirnames: 
+                smugline.upload_folder_structure(arguments['<album_name>'], dirpath, file_filter, uploaded_files, number_of_files)
+                uploaded_files += smugline.account_folder_number(dirpath)
+                
     if arguments['download']:
         file_filter = smugline.get_filter(arguments['--media'])
         smugline.download_album(arguments['<album_name>'],
