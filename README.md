@@ -1,3 +1,16 @@
+# Recursive SmugMug Upload  
+
+This tool is a fork of smugline that adds the following features:
+* upload that creates a folder structure on smugmug corresponding to the local folder structure
+* upload retries
+
+
+
+
+
+
+
+
 # smugline [![Build Status](https://secure.travis-ci.org/gingerlime/smugline.png?branch=master)](http://travis-ci.org/gingerlime/smugline)
 
 a simple command line tool for smugmug (using [smugpy](https://github.com/chrishoffman/smugpy)).
